@@ -2,22 +2,32 @@ version: "3.9"  # optional since v1.27.0
 services:
   node-1:
     image: julandoomar/bully-algorithm
+    environment:
+      - HOSTNAME=node-1
     networks:
       - pervasive
   node-2:
     image: julandoomar/bully-algorithm
+    environment:
+      - HOSTNAME=node-2
     networks:
       - pervasive
   node-3:
     image: julandoomar/bully-algorithm
+    environment:
+      - HOSTNAME=node-3
     networks:
       - pervasive
   node-4:
     image: julandoomar/bully-algorithm
+    environment:
+      - HOSTNAME=node-4
     networks:
       - pervasive
   node-5:
     image: julandoomar/bully-algorithm
+    environment:
+      - HOSTNAME=node-5
     networks:
       - pervasive
 
