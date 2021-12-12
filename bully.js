@@ -9,10 +9,12 @@ var client  = mqtt.connect('mqtt://mosquitto')
 const topic = "main-channel";
 let coordinator;
 let resultSet = new Set();
-let coordinatorCheck = false;
+let checkTimeout = null;
 let receivedElection = false;
 let electionState = false;
 let electionSend = [];
+let elected = false;
+let coordinatorReceived = false;
 let hostname = process.env.HOSTNAME;
 
 const express = require('express')
@@ -22,7 +24,7 @@ const port = 80;
 app.use(express.json())
 
 app.get('/health', (req, res) => {
-    return res.send('ok');
+    return res.send('Coordinator is Alive');
 })
 
 app.post('/reply', (req, res) => {
@@ -67,9 +69,6 @@ client.on('message', function (topic, message) {
     if(type == 'Discovery-Reply') addDatabase(stringMessage.split('_')[1]) 
     if(type == 'Election-Init') getElectInitiator(stringMessage.split('_')[1])
     if(type == 'Coordinator') setCoordinator(stringMessage.split('_')[1])
-    // if(type == 'Alive') coordinatorCheck = true;
-    // if(type == 'Election') checkElection(stringMessage.split('_')[1]);
-    // if(type == 'Reply') checkReply(stringMessage.split('_')[1]);
 })
 
 function initLeader(stringMessage) {
@@ -93,6 +92,7 @@ function initLeader(stringMessage) {
 }
 
 function addDatabase(stringMessage){
+    checkRoutine.stop()
     const id = stringMessage
               .toString()
               .split("is")[1]
@@ -102,17 +102,20 @@ function addDatabase(stringMessage){
     coordinator = findCoordinator[0]
     console.log("Connected Id is "+Array.from(resultSet).join(' '))
     console.log(`Coordinator is ${coordinator}`)
+    checkRoutine.start();
 }
 
 function setCoordinator(stringMessage) {
+    clearTimeout(checkTimeout)
     const coordinator_id = stringMessage
                         .toString()
                         .split("is")[1]
                         .trim();
     coordinator = coordinator_id;
-    console.log("New Coordinator is "+coordinator)
-    receivedElection = electionState = false;
+    coordinatorReceived = true;
+    receivedElection = electionState = elected = false;
     electionSend = [];
+    checkRoutine.start()
 }
 
 function sendCoordinator() {
@@ -120,21 +123,23 @@ function sendCoordinator() {
     let msg = `Coordinator_Coordinator is ${hostname}`
     console.log(msg);
     client.publish(topic, msg);
+    clearTimeout(checkTimeout)
 }
 
 async function checkCoordinatorHealth () {
     try{
         const { data } = await axios.get(`http://${coordinator}/health`)
+        console.log(data)
+        coordinatorReceived = false
     }
     catch (err) {
-        coordinator = null;
-        setTimeout(checkElectLeader , Math.floor(Math.random() * 100))
+        checkTimeout = setTimeout(checkElectLeader , Math.floor(Math.random() * 100))
     }
         
 }
 
 function checkElectLeader(){
-    if(!receivedElection && !electionState) electLeader(); 
+    if(!coordinatorReceived && !receivedElection && !electionState) electLeader(); 
 }
 
 function electLeader() {
@@ -143,34 +148,47 @@ function electLeader() {
     let msg = `Election-Init_Election initiate by ${hostname}`
     console.log(msg);
     client.publish(topic, msg);
+    checkRoutine.stop()
     electionSend = Array.from(resultSet).sort();
     electionSend.filter((item) => item < hostname);
     electionSend.forEach(item => console.log('Election sent to '+item));
-    setTimeout(() => {
-        if(electionSend.length > 1) sendCoordinator();
-    }, 1000)
+    setTimeout(sendCoordinatorEvent, 100)
 }
 
+function sendCoordinatorEvent(){
+    if(electionSend.length > 1) sendCoordinator();
+}
+
+
 async function getElectInitiator(stringMessage) {
+    checkRoutine.stop();
+    coordinator = null;
     receivedElection = electionState =  true;
     const initiator = stringMessage
                         .toString()
                         .split("by")[1]
                         .trim();
     console.log('Initiation Received from '+initiator)
+    clearTimeout(checkTimeout)
     try {
         if(initiator < hostname && initiator != hostname) {
+            console.log('postinggg..')
             const {data} = await axios.post(`http://${initiator}/reply`, {hostname: hostname})
             console.log(data);
-            receivedElection = false;
-            if(data == "Ok") electLeader(); 
+            if(data == "Ok") {
+                if(!elected) {
+                    console.log('im electing myself')
+                    elected = true;
+                    electLeader(); 
+                }  
+            }
         }
     } catch (err) {
         console.log(err)
     }
 }
 
-cron.schedule("*/5 * * * * *", () => {
+const checkRoutine = cron.schedule("*/5 * * * * *", () => {
     checkCoordinatorHealth();
 })
 
